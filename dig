@@ -1,0 +1,8 @@
+
+#!/usr/bin/env python
+import diggy.main
+
+
+if __name__ == '__main__':
+    diggy.main.main()
+
