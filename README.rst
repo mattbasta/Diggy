@@ -19,9 +19,9 @@ enabling regression testing.
  Using Diggy
 -------------
 
--s                  Alias to --source
+-s                  Alias to ``--source``
 --source            The source of the files. May be "directory" or "fmo"
-                    (default). If using "directory", the --directory option
+                    (default). If using "directory", the ``--directory`` option
                     must be set.
 --directory         The directory to pull files from for testing. Required if
                     the source is set to "directory".
@@ -30,12 +30,18 @@ enabling regression testing.
                     the --fixeddirectory.
 --fixeddirectory    The directory to move files that do not throw tracebacks
                     (along with their logs, if present). Defaults to
-                    `fixed_tracebacks/`.
+                    ``fixed_tracebacks/``.
 --brokendirectory   The directory to move files that throw tacebacks (along
                     with the new traceback log). Defaults to
-                    `tracebacks/`.
+                    ``tracebacks/``.
 --cachefile         The location to store a cache of paths taken when
-                    `--source` is set to `fmo`. Defaults to `testcache.cache`.
+                    ``--source`` is set to ``fmo``. Defaults to
+                    ``testcache.cache``.
+--sparse            When pulling from ``fmo`` as a source, this option will
+                    use the last version listed in an add-on's directory. All
+                    other versions will not be tested. This is appropraite for
+                    a fast test and getting an overview of the expected diggy
+                    results.
 
 
 Example Usage
@@ -55,6 +61,8 @@ Example Usage
 ------------------
  Diggy diggy hole
 ------------------
+
+::
 
                                                   ___I___
                                                  /=  |  #\

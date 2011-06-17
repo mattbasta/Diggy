@@ -28,15 +28,33 @@ def main():
     parser.add_argument("--directory",
                         help="The directory to find add-ons in.",
                         required=False)
+    parser.add_argument("--brokendirectory",
+                        help="The directory to put broken add-ons in.",
+                        required=False,
+                        default="tracebacks/")
+    parser.add_argument("--fixeddirectory",
+                        help="The directory to put fixed add-ons in.",
+                        required=False,
+                        default="fixed_tracebacks/")
+    parser.add_argument("--cachefile",
+                        help="The path to the test cache.",
+                        required=False,
+                        default="testcache.cache")
     parser.add_argument("--movetofixed",
                         const=True,
                         action="store_const",
                         help="If the validation passes, move the add-on to "
                              "the fixed tracebacks folder")
+    parser.add_argument("--sparse",
+                        const=True,
+                        help="Running in sparse mode will only download the "
+                             "most recent version of an add-on when running "
+                             "from --source fmo.",
+                        action="store_const")
     args = parser.parse_args()
 
     if args.source == "fmo":
-        start_fmo()
+        start_fmo(args)
     else:
         if not args.directory:
             print "No directory provided."
@@ -50,23 +68,22 @@ def main():
 
             print fname
             path = os.path.join(args.directory, fname)
-            val_result = _validate(path, fname)
+            val_result = _validate(path, fname, args)
+            print "Traceback fail: ", val_result
             if val_result and args.movetofixed:
-                shutil.move(path, "fixed_tracebacks/%s" % fname)
-                shutil.move("%s.log" % path, "fixed_tracebacks/%s.log" % fname)
+                shutil.move(path, "%s%s" % (args.fixeddirectory, fname))
+                shutil.move("%s.log" % path, "%s%s.log" %
+                                                 (args.fixeddirectory, fname))
 
 
-def start_fmo():
+def start_fmo(args):
     """Begin iterating ftp.mozilla.com and find add-ons to validate."""
-
     global acount, testcache
 
     print "I AM A DWARF AND I'M RUNNING SOME TESTS! RUNNY RUNNY TESTS!"
-
     # Load up previous caches of properly validated add-ons.
-    print "Loading test cache..."
     try:
-        testcachedata = open("testcache.cache").read()
+        testcachedata = open(args.cachefile).read()
         for line in testcachedata.split("\n"):
             testcache.add(line.strip())
     except:
@@ -81,24 +98,34 @@ def start_fmo():
         print addon_link
         acount += 1
         br.follow_link(addon_link)
-        handle_addon_directory(br)
+        handle_addon_directory(br, args)
 
 
-def handle_addon_directory(br):
+def handle_addon_directory(br, args):
     """Iterates through each version of an add-on and validates it."""
-
     global vcount
+
+    links = []
     for version_link in br.links():
         if version_link.url.count("?") or version_link.url.startswith("/"):
             continue
         vcount += 1
 
-        download_and_validate("%s%s" % (version_link.base_url,
-                                        version_link.url),
-                              version_link.url)
+        url = "%s%s" % (version_link.base_url, version_link.url)
+
+        if args.sparse:
+            links.append((url, version_link.url))
+        else:
+            vcount += 1
+            download_and_validate(url, version_link.url, args)
+
+    if args.sparse and links:
+        vcount += 1
+        url, name = links.pop()
+        download_and_validate(url, name, args)
 
 
-def download_and_validate(link, name):
+def download_and_validate(link, name, args):
     """Downloads an add-on and performs the validation."""
 
     link_hash = hashlib.md5(link).hexdigest()
@@ -116,21 +143,18 @@ def download_and_validate(link, name):
     output.write(request.read())
     output.close()
 
-    _validate(path, name)
+    _validate(path, name, args)
 
     testcache.add(link_hash)
-    open("testcache.cache", mode="a").write("\n%s" % link_hash)
+    open(args.cachefile, mode="a").write("\n%s" % link_hash)
 
 
-def _validate(path, name):
+def _validate(path, name, args):
     """Perform steps necessary to complete a basic validation."""
-
     print "Validating..."
-
     s = sys.stdout
     sys.stdout = StringIO()
     toprint = []
-
     result = True
 
     try:
@@ -143,15 +167,18 @@ def _validate(path, name):
 
         toprint.append("Done - %d/%d" % (acount, vcount) if json else json)
     except Exception as ex:
-        tback = open("tracebacks/%s.log" % name, mode="w")
+        # Make crazy names safer.
+        if name.startswith("-"):
+            name = "_%s" % name
+
+        tback = open("%s%s.log" % (args.brokendirectory, name), mode="w")
         traceback.print_exc(file=tback)
         tback.close()
 
-        traceback_path = "tracebacks/%s" % name
+        traceback_path = "%s%s" % (args.brokendirectory, name)
         if path != traceback_path:
             shutil.move(path, traceback_path)
-        toprint.append("FAILURE WITH TRACEBACK: %s" % ("%s.log" %
-                                                traceback_path))
+        toprint.append("TRACEBACK FAIL: %s" % ("%s.log" % traceback_path))
         result = False
 
     sys.stdout = s
