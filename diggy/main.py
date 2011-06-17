@@ -158,7 +158,6 @@ def _validate(path, name, args):
     result = True
 
     try:
-        validator.validate.validator.loader.validator.testcases.content.testendpoint_js.traverser.DEBUG = True
         json = validate(path=path)
         output = sys.stdout.getvalue()
 
