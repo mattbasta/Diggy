@@ -86,8 +86,7 @@ def start_fmo(args):
         testcachedata = open(args.cachefile).read()
         for line in testcachedata.split("\n"):
             testcache.add(line.strip())
-    except:
-        raise
+    except IOError:
         testcache = set()
 
     br = mechanize.Browser()
