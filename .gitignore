@@ -2,5 +2,4 @@
 *.swp
 *.pyc
 testcache.cache
-tracebacks/
-fixed_tracebacks/
+cache/

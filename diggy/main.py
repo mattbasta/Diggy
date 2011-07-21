@@ -5,19 +5,21 @@ import mechanize
 import os
 import shutil
 import sys
+import time
 import traceback
 import urllib2
 import validator.validate
+
+import couchdb
+import mechanize
 from validator.validate import validate
 
-
-acount = 0
-vcount = 0
 
 testcache = set()
 
 def main():
     """Figure out what's up."""
+    global testcache
 
     parser = argparse.ArgumentParser(
             description="Begin digging for problems with the validator")
@@ -27,34 +29,56 @@ def main():
                         choices=["fmo", "directory"])
     parser.add_argument("--directory",
                         help="The directory to find add-ons in.",
-                        required=False)
-    parser.add_argument("--brokendirectory",
-                        help="The directory to put broken add-ons in.",
                         required=False,
-                        default="tracebacks/")
-    parser.add_argument("--fixeddirectory",
-                        help="The directory to put fixed add-ons in.",
-                        required=False,
-                        default="fixed_tracebacks/")
+                        default="cache/")
     parser.add_argument("--cachefile",
                         help="The path to the test cache.",
                         required=False,
                         default="testcache.cache")
-    parser.add_argument("--movetofixed",
+    parser.add_argument("--thorough",
                         const=True,
-                        action="store_const",
-                        help="If the validation passes, move the add-on to "
-                             "the fixed tracebacks folder")
-    parser.add_argument("--sparse",
+                        help="Running in thorough mode will download all "
+                             "versions of an add-on when running from "
+                             "--source fmo.",
+                        action="store_const")
+    parser.add_argument("--js",
                         const=True,
-                        help="Running in sparse mode will only download the "
-                             "most recent version of an add-on when running "
-                             "from --source fmo.",
+                        help="Running this will scrape JS information from "
+                             "the add-ons.",
                         action="store_const")
     args = parser.parse_args()
 
+    print "I'm PROFESSOR GRIZZZWALLLDDDDDD!"
+
     if args.source == "fmo":
-        start_fmo(args)
+        # Load up previous caches of properly validated add-ons.
+        try:
+            testcachedata = open(args.cachefile).read()
+            for line in testcachedata.split("\n"):
+                testcache.add(line.strip())
+        except IOError:
+            testcache = set()
+
+        br = mechanize.Browser()
+        br.open("http://ftp.mozilla.org/pub/mozilla.org/addons/")
+        for addon_link in list(br.links()):
+            if addon_link.url.startswith("/") or addon_link.url.count("?"):
+                continue
+            print addon_link.url
+
+            # Test if it's in the cache already.
+            link_hash = hashlib.md5(addon_link.url).hexdigest()
+            if link_hash in testcache:
+                print "Cached (skipping)"
+                continue
+
+            br.follow_link(addon_link)
+            handle_addon_directory(br, args)
+
+            # Add the URL to the cache.
+            testcache.add(link_hash)
+            open(args.cachefile, mode="a").write("\n%s" % link_hash)
+
     else:
         if not args.directory:
             print "No directory provided."
@@ -66,60 +90,30 @@ def main():
             elif not fname.endswith((".jar", ".xpi")):
                 continue
 
-            print fname
             path = os.path.join(args.directory, fname)
             val_result = _validate(path, fname, args)
-            print "Traceback fail: ", val_result
             if val_result and args.movetofixed:
                 shutil.move(path, "%s%s" % (args.fixeddirectory, fname))
                 shutil.move("%s.log" % path, "%s%s.log" %
                                                  (args.fixeddirectory, fname))
 
 
-def start_fmo(args):
-    """Begin iterating ftp.mozilla.com and find add-ons to validate."""
-    global acount, testcache
-
-    print "I AM A DWARF AND I'M RUNNING SOME TESTS! RUNNY RUNNY TESTS!"
-    # Load up previous caches of properly validated add-ons.
-    try:
-        testcachedata = open(args.cachefile).read()
-        for line in testcachedata.split("\n"):
-            testcache.add(line.strip())
-    except IOError:
-        testcache = set()
-
-    br = mechanize.Browser()
-    br.open("http://ftp.mozilla.org/pub/mozilla.org/addons/")
-    for addon_link in list(br.links()):
-        if addon_link.url.startswith("/") or addon_link.url.count("?"):
-            continue
-        print addon_link
-        acount += 1
-        br.follow_link(addon_link)
-        handle_addon_directory(br, args)
-
-
 def handle_addon_directory(br, args):
     """Iterates through each version of an add-on and validates it."""
-    global vcount
 
     links = []
     for version_link in br.links():
         if version_link.url.count("?") or version_link.url.startswith("/"):
             continue
-        vcount += 1
 
         url = "%s%s" % (version_link.base_url, version_link.url)
 
-        if args.sparse:
+        if not args.thorough:
             links.append((url, version_link.url))
         else:
-            vcount += 1
             download_and_validate(url, version_link.url, args)
 
-    if args.sparse and links:
-        vcount += 1
+    if not args.thorough and links:
         url, name = links.pop()
         download_and_validate(url, name, args)
 
@@ -127,60 +121,73 @@ def handle_addon_directory(br, args):
 def download_and_validate(link, name, args):
     """Downloads an add-on and performs the validation."""
 
-    link_hash = hashlib.md5(link).hexdigest()
-    if link_hash in testcache:
-        print "Cached (skipping): %s" % link
-        return
+    # Add some safety to the name.
+    if not name[0].isalnum():
+        name = "_%s" % name
 
-    print "Downloading %s" % link
-
-    # Download
     request = urllib2.urlopen(link)
     extension = link.split(".")[-1]
-    path = "/tmp/validate.%s" % extension
+
+    # Put the extension where it belongs.
+    path = "%s%s" % (args.directory, name)
     output = open(path, "w")
     output.write(request.read())
     output.close()
 
     _validate(path, name, args)
 
-    testcache.add(link_hash)
-    open(args.cachefile, mode="a").write("\n%s" % link_hash)
-
 
 def _validate(path, name, args):
     """Perform steps necessary to complete a basic validation."""
-    print "Validating..."
+
     s = sys.stdout
     sys.stdout = StringIO()
-    toprint = []
-    result = True
+    toprint = ["Validating %s" % name]
+
+    couch = couchdb.Server()
+    start_time = time.time()
+
+    output = {}
 
     try:
-        json = validate(path=path)
-        output = sys.stdout.getvalue()
+        err = validate(path=path, scrape=args.js, format=None)
+        output = json.loads(err.render_json())
 
-        toprint.append("JSON Length: %d; stdout Length: %d" % (len(json),
-                                                               len(output)))
+    except:
+        output = {"error": True,
+                  "traceback": traceback.format_exc()}
 
-        toprint.append("Done - %d/%d" % (acount, vcount) if json else json)
-    except Exception as ex:
-        # Make crazy names safer.
-        if name.startswith("-"):
-            name = "_%s" % name
+    else:
+        # Save scraped JS.
+        if args.js:
+            js_db = couch["grizwald_js"]
 
-        tback = open("%s%s.log" % (args.brokendirectory, name), mode="w")
-        traceback.print_exc(file=tback)
-        tback.close()
+            js_files = err.get_resource("js")
+            if js_files:
+                for js_file in js_files:
+                    js_db.save({"blob": js_file,
+                                "type": "js",
+                                "path": path,
+                                "now": start_time})
 
-        traceback_path = "%s%s" % (args.brokendirectory, name)
-        if path != traceback_path:
-            shutil.move(path, traceback_path)
-        toprint.append("TRACEBACK FAIL: %s" % ("%s.log" % traceback_path))
-        result = False
+            js_identifiers = err.get_resource("js_identifiers")
+            if js_identifiers:
+                js_db.save({"blob": list(js_identifiers),
+                            "type": "identifiers",
+                            "path": path,
+                            "now": start_time})
+
+        output["hard_output"] = sys.stdout.get_value()
+
+    finally:
+        end_time = time.time()
+
+        output["now"] = end_time
+        output["path"] = path
+        output["duration"] = end_time - start_time
+
+        couch["grizwald"].save(output)
 
     sys.stdout = s
     print "\n".join(toprint)
-
-    return result
 
