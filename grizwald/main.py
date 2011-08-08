@@ -2,14 +2,12 @@ from StringIO import StringIO
 import argparse
 import hashlib
 import json
-import mechanize
 import os
 import shutil
 import sys
 import time
 import traceback
 import urllib2
-import validator.validate
 
 import couchdb
 import mechanize
