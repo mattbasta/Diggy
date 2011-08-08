@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-import diggy.main
+import grizwald.main
 
 
 if __name__ == '__main__':
-    diggy.main.main()
+    grizwald.main.main()
 

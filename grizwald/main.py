@@ -1,6 +1,7 @@
 from StringIO import StringIO
 import argparse
 import hashlib
+import json
 import mechanize
 import os
 import shutil
@@ -12,8 +13,9 @@ import validator.validate
 
 import couchdb
 import mechanize
-from validator.validate import validate
 
+from validate import validate
+import git
 
 testcache = set()
 
@@ -25,12 +27,13 @@ def main():
             description="Begin digging for problems with the validator")
     parser.add_argument("-s",
                         "--source",
-                        default="fmo",
+                        default="directory",
                         choices=["fmo", "directory"])
     parser.add_argument("--directory",
                         help="The directory to find add-ons in.",
                         required=False,
-                        default="cache/")
+                        default=os.path.join(os.path.dirname(__file__),
+                                             "../cache/"))
     parser.add_argument("--cachefile",
                         help="The path to the test cache.",
                         required=False,
@@ -46,9 +49,33 @@ def main():
                         help="Running this will scrape JS information from "
                              "the add-ons.",
                         action="store_const")
+    parser.add_argument("-repo",
+                        help="The path to the repo we should use.",
+                        default="/opt/amo-validator/")
+    parser.add_argument("-c",
+                        "--commit",
+                        required=True,
+                        help="The commit hash to associate with the results.")
+    parser.add_argument("--remote",
+                        help="The remote to use for testing.",
+                        required=False)
+    parser.add_argument("--branch",
+                        help="The branch to find the commit on.",
+                        required=False)
     args = parser.parse_args()
 
     print "I'm PROFESSOR GRIZZZWALLLDDDDDD!"
+
+    remote = args.remote if args.remote else "origin"
+
+    # Do a git pull on the branch that we are looking at.
+    if args.branch:
+        git.git_pull(remote=remote, branch=args.branch, repo=args.repo)
+
+    # Get data about the commit and get the full commit hash.
+    commit, commit_ts = git.git_get(repo=args.repo, commit=args.commit)
+    args.commit = commit
+    args.time = commit_ts
 
     if args.source == "fmo":
         # Load up previous caches of properly validated add-ons.
@@ -85,17 +112,13 @@ def main():
             return
 
         for fname in os.listdir(args.directory):
-            if fname == ".DS_Store":
+            if fname in (".DS_Store", "Thumbs.db", "desktop.ini", ):
                 continue
             elif not fname.endswith((".jar", ".xpi")):
                 continue
 
             path = os.path.join(args.directory, fname)
-            val_result = _validate(path, fname, args)
-            if val_result and args.movetofixed:
-                shutil.move(path, "%s%s" % (args.fixeddirectory, fname))
-                shutil.move("%s.log" % path, "%s%s.log" %
-                                                 (args.fixeddirectory, fname))
+            _validate(path, fname, args)
 
 
 def handle_addon_directory(br, args):
@@ -120,6 +143,9 @@ def handle_addon_directory(br, args):
 
 def download_and_validate(link, name, args):
     """Downloads an add-on and performs the validation."""
+
+    if name.startswith("./"):
+        name = name[2:]
 
     # Add some safety to the name.
     if not name[0].isalnum():
@@ -150,10 +176,10 @@ def _validate(path, name, args):
     output = {}
 
     try:
-        err = validate(path=path, scrape=args.js, format=None)
-        output = json.loads(err.render_json())
+        output = validate(path=path, validator=args.repo, scrape=args.js)
+        output = json.loads(output)
 
-    except:
+    except Exception:
         output = {"error": True,
                   "traceback": traceback.format_exc()}
 
@@ -162,22 +188,20 @@ def _validate(path, name, args):
         if args.js:
             js_db = couch["grizwald_js"]
 
-            js_files = err.get_resource("js")
-            if js_files:
+            if "js" in output:
                 for js_file in js_files:
-                    js_db.save({"blob": js_file,
+                    js_db.save({"blob": output["js"],
                                 "type": "js",
                                 "path": path,
                                 "now": start_time})
 
-            js_identifiers = err.get_resource("js_identifiers")
-            if js_identifiers:
-                js_db.save({"blob": list(js_identifiers),
+            if "js_identifiers" in output:
+                js_db.save({"blob": output["js_identifiers"],
                             "type": "identifiers",
                             "path": path,
                             "now": start_time})
 
-        output["hard_output"] = sys.stdout.get_value()
+        output["hard_output"] = sys.stdout.getvalue()
 
     finally:
         end_time = time.time()
@@ -185,6 +209,8 @@ def _validate(path, name, args):
         output["now"] = end_time
         output["path"] = path
         output["duration"] = end_time - start_time
+        output["commit"] = args.commit
+        output["commit_ts"] = args.time
 
         couch["grizwald"].save(output)
 
