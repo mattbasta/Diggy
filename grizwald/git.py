@@ -25,5 +25,5 @@ def git_get(repo, commit):
     output = _run_command(
             'git log %s^1..%s --pretty=format:"%%H %%ct"' % (commit, commit),
             repo)
-    return output.split()
+    return output.split("\n")[0].split()
 

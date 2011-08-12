@@ -2,6 +2,7 @@ from StringIO import StringIO
 import argparse
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import sys
@@ -42,14 +43,22 @@ def main():
                              "versions of an add-on when running from "
                              "--source fmo.",
                         action="store_const")
+    parser.add_argument("--xml",
+                        const=True,
+                        action="store_const")
     parser.add_argument("--js",
                         const=True,
                         help="Running this will scrape JS information from "
                              "the add-ons.",
                         action="store_const")
+    parser.add_argument("-m",
+                        "--multiprocessing",
+                        const=True,
+                        help="This flag will enable multi-core support.",
+                        action="store_const")
     parser.add_argument("-repo",
                         help="The path to the repo we should use.",
-                        default="/opt/amo-validator/")
+                        default="/opt/griz-amo-validator/")
     parser.add_argument("-c",
                         "--commit",
                         required=True,
@@ -74,6 +83,8 @@ def main():
     commit, commit_ts = git.git_get(repo=args.repo, commit=args.commit)
     args.commit = commit
     args.time = commit_ts
+
+    git.git_reset_hard(commit, args.repo)
 
     if args.source == "fmo":
         # Load up previous caches of properly validated add-ons.
@@ -109,14 +120,31 @@ def main():
             print "No directory provided."
             return
 
+
+        if args.multiprocessing:
+            pool = multiprocessing.Pool()
+
         for fname in os.listdir(args.directory):
             if fname in (".DS_Store", "Thumbs.db", "desktop.ini", ):
                 continue
-            elif not fname.endswith((".jar", ".xpi")):
+            elif ((args.xml and not fname.endswith(".xml")) or
+                  (not args.xml and not fname.endswith(
+                      (".jar", ".xpi", ".xml", ".json", ".webapp")))):
                 continue
 
             path = os.path.join(args.directory, fname)
-            _validate(path, fname, args)
+            if args.multiprocessing:
+                pool.apply_async(_validate, [path, fname, args])
+            else:
+                _validate(path, fname, args)
+
+        if args.multiprocessing:
+            print "Jobs assigned!"
+            pool.close()  # Pool's closed!
+            pool.join()
+            print
+
+        print "Job done!"
 
 
 def handle_addon_directory(br, args):
